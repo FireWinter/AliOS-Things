@@ -12,9 +12,12 @@
 extern "C" {
 #endif
 
-#define AOS_WAIT_FOREVER    0xffffffffu
-#define AOS_NO_WAIT         0x0
+#define AOS_WAIT_FOREVER 0xffffffffu
+#define AOS_NO_WAIT      0x0
+
+#ifndef AOS_DEFAULT_APP_PRI
 #define AOS_DEFAULT_APP_PRI 32
+#endif
 
 typedef struct {
     void *hdl;
@@ -26,7 +29,6 @@ typedef aos_hdl_t aos_sem_t;
 typedef aos_hdl_t aos_queue_t;
 typedef aos_hdl_t aos_timer_t;
 typedef aos_hdl_t aos_work_t;
-typedef aos_hdl_t aos_event_t;
 
 typedef struct {
     void *hdl;
@@ -50,7 +52,7 @@ int aos_get_hz(void);
 /**
  * Get kernel version.
  *
- * @return  SYSINFO_KERNEL_VERSION.
+ * @return  sysinfo_kernel_version.
  */
 const char *aos_version_get(void);
 
@@ -79,8 +81,8 @@ int aos_task_new(const char *name, void (*fn)(void *), void *arg, int stack_size
  *
  * @return  0: success.
  */
-int aos_task_new_ext(aos_task_t *task, const char *name, void (*fn)(void *), void *arg,
-                     int stack_size, int prio);
+int aos_task_new_ext(aos_task_t *task, const char *name, void (*fn)(void *),
+                     void *arg, int stack_size, int prio);
 
 /**
  * Exit a task.
@@ -88,6 +90,15 @@ int aos_task_new_ext(aos_task_t *task, const char *name, void (*fn)(void *), voi
  * @param[in]  code  not used now.
  */
 void aos_task_exit(int code);
+
+/**
+ * Delete a task by name.
+ *
+ * @param[in]  name  task name.
+ *
+ * @return  0: success.
+ */
+int aos_task_delete(char *name);
 
 /**
  * Get task name.
@@ -142,15 +153,15 @@ int aos_mutex_new(aos_mutex_t *mutex);
 /**
  * Free a mutex.
  *
- * @param[in]  mutex  mutex object, mem refered by hdl pointer in aos_mutex_t will
- *                    be freed internally.
+ * @param[in]  mutex  mutex object, mem refered by hdl pointer in
+ *                    aos_mutex_t will be freed internally.
  */
 void aos_mutex_free(aos_mutex_t *mutex);
 
 /**
  * Lock a mutex.
  *
- * @param[in]  mutex    mutex object, it contains kernel obj pointer which aos_mutex_new alloced.
+ * @param[in]  mutex    mutex object, it contains kernel obj pointer.
  * @param[in]  timeout  waiting until timeout in milliseconds.
  *
  * @return  0: success.
@@ -160,7 +171,7 @@ int aos_mutex_lock(aos_mutex_t *mutex, unsigned int timeout);
 /**
  * Unlock a mutex.
  *
- * @param[in]  mutex  mutex object, it contains kernel obj pointer which oc_mutex_new alloced.
+ * @param[in]  mutex  mutex object, it contains kernel obj pointer.
  *
  * @return  0: success.
  */
@@ -178,8 +189,8 @@ int aos_mutex_is_valid(aos_mutex_t *mutex);
 /**
  * Alloc a semaphore.
  *
- * @param[out]  sem    pointer of semaphore object, semaphore object must be alloced,
- *                     hdl pointer in aos_sem_t will refer a kernel obj internally.
+ * @param[out]  sem    pointer of semaphore object, semaphore object must be
+ *                     alloced, hdl pointer in aos_sem_t will refer a kernel obj internally.
  * @param[in]   count  initial semaphore counter.
  *
  * @return  0:success.
@@ -197,7 +208,8 @@ void aos_sem_free(aos_sem_t *sem);
 /**
  * Acquire a semaphore.
  *
- * @param[in]  sem      semaphore object, it contains kernel obj pointer which aos_sem_new alloced.
+ * @param[in]  sem      semaphore object, it contains kernel obj pointer
+ *                      which aos_sem_new alloced.
  * @param[in]  timeout  waiting until timeout in milliseconds.
  *
  * @return  0: success.
@@ -228,64 +240,6 @@ int aos_sem_is_valid(aos_sem_t *sem);
 void aos_sem_signal_all(aos_sem_t *sem);
 
 /**
- * This function will create an event with an initialization flag set.
- * This function should not be called from interrupt context.
- *
- * @param[in]  event    event object pointer.
- * @param[in]  flags    initialization flag set(provided by caller).
- *
- * @return  0: success.
- */
-
-int aos_event_new(aos_event_t *event, unsigned int flags);
-
-/**
- * This function will free an event.
- * This function shoud not be called from interrupt context.
- *
- * @param[in]  event    memory refered by hdl pointer in event will be freed.
- *
- * @return  N/A.
- */
-
-void aos_event_free(aos_event_t *event);
-
-/**
- * This function will try to get flag set from given event, if the request flag
- * set is satisfied, it will return immediately, if the request flag set is not
- * satisfied with timeout(RHINO_WAIT_FOREVER,0xFFFFFFFF), the caller task will be
- * pended on event until the flag is satisfied, if the request flag is not 
- * satisfied with timeout(RHINO_NO_WAIT, 0x0), it will also return immediately.
- * Note, this function should not be called from interrupt context because it has
- * possible to lead context switch and an interrupt has no TCB to save context.
- *
- * @param[in]  event        event object pointer.
- * @param[in]  flags        request flag set.
- * @param[in]  opt          operation type, such as AND,OR,AND_CLEAR,OR_CLEAR.
- * @param[out] actl_flags   the internal flags value hold by event.
- * @param[in]  flags        request flag set.
- * @param[in]  timeout      max wait time in millisecond.
- *
- * @return  0: success.
- */
-
-int aos_event_get(aos_event_t *event, unsigned int flags, unsigned char opt,
-                       unsigned int *actl_flags, unsigned int timeout);
-
-/**
-* This function will set flag set to given event, and it will check if any task
-* which is pending on the event should be waken up. 
-*
-* @param[in]  event    event object pointer.
-* @param[in]  flags    flag set to be set into event.
-* @param[in]  opt      operation type, such as AND,OR.
-*
-* @return  0: success.
-*/
-
-int aos_event_set(aos_event_t *event, unsigned int flags, unsigned char opt);
-
-/**
  * This function will create a queue.
  *
  * @param[in]  queue    pointer to the queue(the space is provided by user).
@@ -295,7 +249,6 @@ int aos_event_set(aos_event_t *event, unsigned int flags, unsigned char opt);
  *
  * @return  0: success.
  */
-
 int aos_queue_new(aos_queue_t *queue, void *buf, unsigned int size, int max_msg);
 
 /**
@@ -357,23 +310,23 @@ void *aos_queue_buf_ptr(aos_queue_t *queue);
  *
  * @return  0: success.
  */
-int aos_timer_new(aos_timer_t *timer, void (*fn)(void *, void *),
-                  void *arg, int ms, int repeat);
+int aos_timer_new(aos_timer_t *timer, void (*fn)(void *, void *), void *arg,
+                  int ms, int repeat);
 
 /**
  * This function will create a timer.
  *
- * @param[in]  timer   pointer to the timer.
- * @param[in]  fn      callbak of the timer.
- * @param[in]  arg     the argument of the callback.
- * @param[in]  ms      ms of the normal timer triger.
- * @param[in]  repeat  repeat or not when the timer is created.
+ * @param[in]  timer     pointer to the timer.
+ * @param[in]  fn        callbak of the timer.
+ * @param[in]  arg       the argument of the callback.
+ * @param[in]  ms        ms of the normal timer triger.
+ * @param[in]  repeat    repeat or not when the timer is created.
  * @param[in]  auto_run  run auto or not when the timer is created.
  *
  * @return  0: success.
  */
-int aos_timer_new_ext(aos_timer_t *timer, void (*fn)(void *, void *),
-                  void *arg, int ms, int repeat, unsigned char auto_run);
+int aos_timer_new_ext(aos_timer_t *timer, void (*fn)(void *, void *), void *arg,
+                      int ms, int repeat, unsigned char auto_run);
 
 /**
  * This function will delete a timer.
@@ -405,6 +358,9 @@ int aos_timer_stop(aos_timer_t *timer);
  *
  * @param[in]  timer  pointer to the timer.
  * @param[in]  ms     ms of the timer triger.
+ *
+ * @note change the timer attributes should follow
+ *       the sequence as timer_stop->timer_change->timer_start
  *
  * @return  0: success.
  */
@@ -490,6 +446,16 @@ void *aos_malloc(unsigned int size);
 /**
  * Alloc memory and clear to zero.
  *
+ * @param[in]  nitems  number of items to malloc.
+ * @param[in]  size    size of one item to malloc.
+ *
+ * @return  NULL: error.
+ */
+void *aos_calloc(unsigned int nitems, unsigned int size);
+
+/**
+ * Alloc memory and clear to zero.
+ *
  * @param[in]  size  size of the mem to malloc.
  *
  * @return  NULL: error.
@@ -526,6 +492,21 @@ long long aos_now(void);
 long long aos_now_ms(void);
 
 /**
+ * @brief Retrieves the timer string. Under RTOS w/o RTC, this fucntion will
+ *        return the UTC time string that consider boot-up as 01-01 00:00:00.000.
+ *        Under Linuxhost and compile option "vall=posix", this function will
+ *        get the local time which considering time zone.
+ *
+ * @param[out]  buf  give buffer to save timer string
+ * @param[in]   len  the length of buffer, recommand 19, right a terminating
+ *                   null-character is appended in last.
+ *
+ * @return the string of timer. Format is MM-dd hh:mm:ss.ms. e.g. 01-01 00:00:10.000.
+ *
+ */
+char *aos_now_time_str(char *buffer, const int len);
+
+/**
  * Msleep.
  *
  * @param[in]  ms  sleep time in milliseconds.
@@ -538,7 +519,7 @@ void aos_msleep(int ms);
 void aos_init(void);
 
 /**
- * Start system
+ * Start system.
  */
 void aos_start(void);
 

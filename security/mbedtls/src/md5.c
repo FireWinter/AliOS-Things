@@ -311,8 +311,6 @@ void mbedtls_md5_finish( mbedtls_md5_context *ctx, unsigned char output[16] )
     PUT_UINT32_LE( ctx->state[3], output, 12 );
 }
 
-#endif /* !MBEDTLS_MD5_ALT */
-
 /*
  * output = MD5( input buffer )
  */
@@ -326,6 +324,8 @@ void mbedtls_md5( const unsigned char *input, size_t ilen, unsigned char output[
     mbedtls_md5_finish( &ctx, output );
     mbedtls_md5_free( &ctx );
 }
+
+#endif /* !MBEDTLS_MD5_ALT */
 
 #if defined(MBEDTLS_SELF_TEST)
 /*

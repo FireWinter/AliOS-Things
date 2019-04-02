@@ -6,7 +6,8 @@
 #include <osdep_service.h>
 #include <stdio.h>
 #include <freertos/wrapper.h>
-#include <aos/aos.h>
+#include "aos/kernel.h"
+#include <aos/errno.h>
 #include <freertos_pmu.h>
 /********************* os depended utilities ********************/
 
@@ -557,7 +558,7 @@ static int _aos_create_task(struct task_struct *ptask, const char *name,
 static void _aos_delete_task(struct task_struct *ptask)
 {
 	if (!ptask->task.hdl){
-		DBG_8195A("_freertos_delete_task(): ptask is NULL!\n");
+		DBG_8195A("_aos_delete_task(): ptask is NULL!\n");
 		return;
 	}
 
@@ -639,6 +640,11 @@ int _aos_timer_change_no_repeat(aos_timer_t *timer, int ms)
         return -EINVAL;
     }
 
+    ret = krhino_timer_stop(timer->hdl);
+    if (ret != RHINO_SUCCESS) {
+        return ret;
+    }
+    
     ret = krhino_timer_change(timer->hdl, MS2TICK(ms), 0);
     if (ret == RHINO_SUCCESS) {
         return 0;
@@ -692,9 +698,11 @@ u32  _aos_timerChangePeriodFromISR( _timerHandle xTimer,
 							   osdepTickType xNewPeriod, 
 							   osdepBASE_TYPE *pxHigherPriorityTaskWoken )
 {
-	if(xNewPeriod == 0)
-		xNewPeriod += 1;
-	return !aos_timer_change(&xTimer->timer, xNewPeriod);	
+    if(xNewPeriod == 0)
+        xNewPeriod += 1;
+    
+    (u32)aos_timer_stop(&xTimer->timer);	    
+    return !aos_timer_change(&xTimer->timer, xNewPeriod);	
 }
 
 u32  _aos_timerReset( _timerHandle xTimer, 
@@ -747,7 +755,7 @@ void _aos_wakelock_timeout(uint32_t timeout)
 	
 #elif defined(CONFIG_PLATFORM_8711B)
 	if (pmu_yield_os_check()) 
-		pmu_set_sysactive_time(PMU_WLAN_DEVICE, timeout);
+		pmu_set_sysactive_time(timeout);
 	else
 		DBG_INFO("can't aquire wake during suspend flow!!\n");
 #endif

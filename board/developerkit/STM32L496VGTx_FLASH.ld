@@ -73,6 +73,24 @@ SECTIONS
     _etext = .;        /* define a global symbols at end of code */
   } >FLASH
 
+    .ctors :
+    {
+        . = ALIGN(8);
+        PROVIDE(__ctors_start__ = .);
+        KEEP (*(SORT(.init_array.*)))
+        KEEP (*(.init_array))
+        PROVIDE(__ctors_end__ = .);
+    } >FLASH
+
+    .dtors :
+    {
+        . = ALIGN(8);
+        PROVIDE(__dtors_start__ = .);
+        KEEP(*(SORT(.dtors.*)))
+        KEEP(*(.dtors))
+        PROVIDE(__dtors_end__ = .);
+    } >FLASH
+
   /* Constant data goes into FLASH */
   .rodata :
   {

@@ -14,7 +14,8 @@
 #include <pthread.h>
 #include <errno.h>
 
-#include <aos/aos.h>
+#include "aos/kernel.h"
+#include "aos/list.h"
 
 #include <cpu_event.h>
 #include <k_api.h>
@@ -91,7 +92,6 @@ static pthread_mutex_t g_event_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t rhino_cpu_thread[RHINO_CONFIG_CPU_NUM];
 static pthread_mutex_t spin_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutexattr_t spin_lock_attr;
-static int lock;
 
 typedef struct {
     klist_t node;
@@ -108,7 +108,7 @@ void syscall_error_label(void)
     assert(0);
 }
 
-void unlock_spin(void)
+void os_unlock_sys_spin(void)
 {
     int ret;
     ret = pthread_mutex_unlock(&spin_lock);
@@ -132,7 +132,7 @@ uint8_t cpu_cur_get(void)
 
 void cpu_signal(uint8_t cpu_num)
 {
-     pthread_kill(rhino_cpu_thread[cpu_num], SIGRTMIN);
+    pthread_kill(rhino_cpu_thread[cpu_num], SIGRTMIN);
 }
 
 void *cpu_entry(void *arg)
@@ -175,14 +175,14 @@ void cpu_spin_unlock(kspinlock_t *lock)
 }
 #endif
 
-static inline void enter_signal(int signo)
+void enter_signal(int signo)
 {
     task_ext_t *tcb_ext = (task_ext_t *)g_active_task[cpu_cur_get()]->task_stack;
     tcb_ext->in_signals ++;
     assert(tcb_ext->in_signals == 1);
 }
 
-static inline void leave_signal(int signo)
+void leave_signal(int signo)
 {
     task_ext_t *tcb_ext = (task_ext_t *)g_active_task[cpu_cur_get()]->task_stack;
     tcb_ext->in_signals --;
@@ -191,8 +191,9 @@ static inline void leave_signal(int signo)
 
 static inline int in_signal(void)
 {
-    if (!g_active_task[cpu_cur_get()])
+    if (!g_active_task[cpu_cur_get()]) {
         return 0;
+    }
 
     task_ext_t *tcb_ext = (task_ext_t *)g_active_task[cpu_cur_get()]->task_stack;
     return tcb_ext->in_signals;
@@ -200,57 +201,36 @@ static inline int in_signal(void)
 
 sigset_t cpu_intrpt_save(void)
 {
-    sigset_t    oldset = {};
-    int ret;
+    sigset_t    oldset = {0};
 
     sigprocmask(SIG_BLOCK, &cpu_sig_set, &oldset);
 
-    if (in_signal()) {
-        ret = pthread_mutex_lock(&spin_lock);
-        assert(ret == 0);
-        lock++;
+    if (!in_signal()) {
+        if (g_active_task[cpu_cur_get()]) {
+            task_ext_t *tcb_ext = (task_ext_t *)g_active_task[cpu_cur_get()]->task_stack;
+            tcb_ext->int_lvl++;
+            if (tcb_ext->int_lvl >= 2) {
+                return oldset;
+            }
+        }
         return oldset;
     }
 
-    if (g_active_task[cpu_cur_get()]) {
-        task_ext_t *tcb_ext = (task_ext_t *)g_active_task[cpu_cur_get()]->task_stack;
-        tcb_ext->int_lvl++;
-        if (tcb_ext->int_lvl >= 2)
-            return oldset;
-    }
-
-    ret = pthread_mutex_lock(&spin_lock);
-    assert(ret == 0);
-
-    lock++;
     return oldset;
 }
 
 void cpu_intrpt_restore(sigset_t cpsr)
 {
-    int ret;
-
-    if (in_signal()) {
-        lock--;
-        ret = pthread_mutex_unlock(&spin_lock);
-        assert(ret == 0);
-        return;
+    if (!in_signal()) {
+        if (g_active_task[cpu_cur_get()]) {
+            task_ext_t *tcb_ext = (task_ext_t *)g_active_task[cpu_cur_get()]->task_stack;
+            tcb_ext->int_lvl --;
+            if (tcb_ext->int_lvl) {
+                return;
+            }
+        }
+        sigprocmask(SIG_UNBLOCK, &cpu_sig_set, NULL);
     }
-
-    if (!g_active_task[cpu_cur_get()]) {
-        goto out;
-    }
-
-    task_ext_t *tcb_ext = (task_ext_t *)g_active_task[cpu_cur_get()]->task_stack;
-    tcb_ext->int_lvl --;
-    if (tcb_ext->int_lvl)
-        return;
-
-out:
-    lock--;
-    ret = pthread_mutex_unlock(&spin_lock);
-    assert(ret == 0);
-    sigprocmask(SIG_UNBLOCK, &cpu_sig_set, NULL);
 }
 
 
@@ -265,6 +245,9 @@ void cpu_task_switch(void)
 void cpu_intrpt_switch(void)
 {
     _cpu_task_switch();
+#if (RHINO_CONFIG_CPU_NUM > 1)
+    krhino_spin_lock(&g_sys_lock);
+#endif
     assert(in_signal());
 }
 
@@ -368,7 +351,7 @@ void *cpu_task_stack_init(cpu_stack_t *base, size_t size, void *arg, task_entry_
     tmp  = tcb_ext->real_stack;
     *tmp = RHINO_TASK_STACK_OVF_MAGIC;
 #else
-    tmp  = (cpu_stack_t *)(tcb_ext->real_stack) + (real_size/sizeof(cpu_stack_t)) - 1u;
+    tmp  = (cpu_stack_t *)(tcb_ext->real_stack) + (real_size / sizeof(cpu_stack_t)) - 1u;
     *tmp = RHINO_TASK_STACK_OVF_MAGIC;
 #endif
 #endif
@@ -443,8 +426,7 @@ void cpu_task_del_hook(ktask_t *tcb, res_free_t *arg)
         res->cnt++;
         ret = krhino_sem_give(&g_res_sem);
         assert(ret == 0);
-    }
-    else {
+    } else {
         res->res[res->cnt] = tcb_ext->real_stack;
         res->cnt++;
         ret = krhino_sem_give(&g_res_sem);
@@ -474,11 +456,9 @@ void task_proc(void)
     task_tcb = tcb_ext->tcb;
     if (task_tcb->mm_alloc_flag == K_OBJ_STATIC_ALLOC) {
         krhino_task_del(tcb_ext->tcb);
-    }
-    else if (task_tcb->mm_alloc_flag == K_OBJ_DYN_ALLOC) {
+    } else if (task_tcb->mm_alloc_flag == K_OBJ_DYN_ALLOC) {
         krhino_task_dyn_del(tcb_ext->tcb);
-    }
-    else {
+    } else {
         LOG("System crash, the mm_alloc_flag of task is %d\n", task_tcb->mm_alloc_flag);
         assert(0);
     }
@@ -491,7 +471,6 @@ static void _cpu_task_switch(void)
     task_ext_t  *from_tcb_ext;
     task_ext_t  *to_tcb_ext;
     uint8_t      cur_cpu_num;
-    int          ret;
 
     cur_cpu_num = cpu_cur_get();
 
@@ -513,18 +492,11 @@ static void _cpu_task_switch(void)
 
     g_active_task[cur_cpu_num] = g_preferred_ready_task[cur_cpu_num];
 
-    #if (RHINO_CONFIG_CPU_NUM > 1)
+#if (RHINO_CONFIG_CPU_NUM > 1)
     swapcontext_safe(from_tcb_ext->uctx, to_tcb_ext->uctx);
-    #else
+#else
     swapcontext(from_tcb_ext->uctx, to_tcb_ext->uctx);
-    #endif
-
-    ret = pthread_mutex_lock(&spin_lock);
-    assert(ret == 0);
-    lock++;
-
-    /* restore errno */
-    errno = from_tcb_ext->saved_errno;
+#endif
 }
 
 void cpu_idle_hook(void)
@@ -584,8 +556,9 @@ int cpu_notify_event(cpu_event_t *event)
 
     pthread_mutex_unlock(&g_event_mutex);
 
-    if (!cpu_event_inited)
+    if (!cpu_event_inited) {
         return 0;
+    }
 
     ret = pthread_kill(rhino_cpu_thread[0], SIGUSR2);
 
@@ -640,12 +613,12 @@ void cpu_init_hook(void)
         .sa_sigaction = tick_interpt,
     };
 
-    #if (RHINO_CONFIG_CPU_NUM > 1)
+#if (RHINO_CONFIG_CPU_NUM > 1)
     struct sigaction cpu_assert_action = {
         .sa_flags = SA_SIGINFO | SA_RESTART,
         .sa_sigaction = cpu_assert,
     };
-    #endif
+#endif
 
     rhino_cpu_thread[0] = pthread_self();
 
@@ -655,10 +628,10 @@ void cpu_init_hook(void)
     sigaddset(&cpu_sig_set, SIGUSR2);
     sigaddset(&cpu_sig_set, SIGALRM);
 
-    #if (RHINO_CONFIG_CPU_NUM > 1)
+#if (RHINO_CONFIG_CPU_NUM > 1)
     sigaddset(&cpu_sig_set, SIGRTMIN);
     cpu_assert_action.sa_mask   = cpu_sig_set;
-    #endif
+#endif
 
     event_sig_action.sa_mask    = cpu_sig_set;
     event_io_action.sa_mask     = cpu_sig_set;
@@ -667,9 +640,9 @@ void cpu_init_hook(void)
     ret  = sigaction(SIGUSR1, &tick_interpt_action, NULL);
     ret |= sigaction(SIGUSR2, &event_sig_action, NULL);
     ret |= sigaction(SIGIO, &event_io_action, NULL);
-    #if (RHINO_CONFIG_CPU_NUM > 1)
+#if (RHINO_CONFIG_CPU_NUM > 1)
     ret |= sigaction(SIGRTMIN, &cpu_assert_action, NULL);
-    #endif
+#endif
 
     assert(ret == 0);
 
@@ -701,10 +674,12 @@ void cpu_io_unregister(void (*f)(int, void *), void *arg)
     cpu_io_cb_t *pcb;
     cpsr = cpu_intrpt_save();
     dlist_for_each_entry(&g_io_list, pcb, cpu_io_cb_t, node) {
-        if (pcb->cb != f)
+        if (pcb->cb != f) {
             continue;
-        if (pcb->arg != arg)
+        }
+        if (pcb->arg != arg) {
             continue;
+        }
         dlist_del(&pcb->node);
         cpu_intrpt_restore(cpsr);
         aos_free(pcb);
@@ -747,12 +722,17 @@ void cpu_sig_handler(int signo, siginfo_t *si, void *ucontext)
 
     if (signo == SIGUSR2) {
         krhino_sem_give(&g_intr_sem);
-    }
-    else if (signo == SIGIO) {
+    } else if (signo == SIGIO) {
         trigger_io_cb(si->si_fd);
     }
 
     krhino_intrpt_exit();
     leave_signal(signo);
 }
+
+void cpu_call_signal(uint8_t cpu_num,int sig)
+{
+    pthread_kill(rhino_cpu_thread[cpu_num], sig);
+}
+
 

@@ -1,4 +1,4 @@
-#include "hal/soc/soc.h"
+#include "aos/hal/flash.h"
 #include <aos/kernel.h>
 
 /* Logic partition on flash devices */
@@ -58,9 +58,7 @@ void board_init(void)
 
 
 
-#include "platform_config.h"
 #include "platform_peripheral.h"
-#include "platform_config.h"
 #include "platform_logging.h"
 #include "wlan_platform_common.h"
 

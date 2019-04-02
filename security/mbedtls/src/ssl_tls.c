@@ -1022,7 +1022,7 @@ void ssl_calc_verify_tls( mbedtls_ssl_context *ssl, unsigned char hash[36] )
     mbedtls_md5_clone( &md5, &ssl->handshake->fin_md5 );
     mbedtls_sha1_clone( &sha1, &ssl->handshake->fin_sha1 );
 
-     mbedtls_md5_finish( &md5,  hash );
+    mbedtls_md5_finish( &md5,  hash );
     mbedtls_sha1_finish( &sha1, hash + 16 );
 
     MBEDTLS_SSL_DEBUG_BUF( 3, "calculated verify result", hash, 36 );
@@ -1037,6 +1037,29 @@ void ssl_calc_verify_tls( mbedtls_ssl_context *ssl, unsigned char hash[36] )
 
 #if defined(MBEDTLS_SSL_PROTO_TLS1_2)
 #if defined(MBEDTLS_SHA256_C)
+
+#if defined(MBEDTLS_SHA256_ALT)
+void ssl_calc_verify_tls_sha256( mbedtls_ssl_context *ssl, unsigned char hash[32] )
+{
+    mbedtls_sha256_context sha256;
+
+    mbedtls_sha256_init_alt( &sha256 );
+
+    MBEDTLS_SSL_DEBUG_MSG( 2, ( "=> calc verify sha256" ) );
+
+    mbedtls_sha256_clone_alt( &sha256, &ssl->handshake->fin_sha256 );
+    mbedtls_sha256_finish_alt( &sha256, hash );
+
+    MBEDTLS_SSL_DEBUG_BUF( 3, "calculated verify result", hash, 32 );
+    MBEDTLS_SSL_DEBUG_MSG( 2, ( "<= calc verify" ) );
+
+    mbedtls_sha256_free_alt( &sha256 );
+
+    return;
+}
+
+#else /* MBEDTLS_SHA256_ALT */
+
 void ssl_calc_verify_tls_sha256( mbedtls_ssl_context *ssl, unsigned char hash[32] )
 {
     mbedtls_sha256_context sha256;
@@ -1055,6 +1078,9 @@ void ssl_calc_verify_tls_sha256( mbedtls_ssl_context *ssl, unsigned char hash[32
 
     return;
 }
+
+#endif /* MBEDTLS_SHA256_ALT */
+
 #endif /* MBEDTLS_SHA256_C */
 
 #if defined(MBEDTLS_SHA512_C)
@@ -4634,12 +4660,18 @@ void mbedtls_ssl_reset_checksum( mbedtls_ssl_context *ssl )
 {
 #if defined(MBEDTLS_SSL_PROTO_SSL3) || defined(MBEDTLS_SSL_PROTO_TLS1) || \
     defined(MBEDTLS_SSL_PROTO_TLS1_1)
-     mbedtls_md5_starts( &ssl->handshake->fin_md5  );
+    mbedtls_md5_starts( &ssl->handshake->fin_md5  );
     mbedtls_sha1_starts( &ssl->handshake->fin_sha1 );
 #endif
 #if defined(MBEDTLS_SSL_PROTO_TLS1_2)
 #if defined(MBEDTLS_SHA256_C)
+#if defined(MBEDTLS_SHA256_ALT)
+    mbedtls_sha256_free_alt( &ssl->handshake->fin_sha256);
+    mbedtls_sha256_init_alt( &ssl->handshake->fin_sha256);
+    mbedtls_sha256_starts_alt( &ssl->handshake->fin_sha256, 0 );
+#else
     mbedtls_sha256_starts( &ssl->handshake->fin_sha256, 0 );
+#endif
 #endif
 #if defined(MBEDTLS_SHA512_C)
     mbedtls_sha512_starts( &ssl->handshake->fin_sha512, 1 );
@@ -4657,7 +4689,11 @@ static void ssl_update_checksum_start( mbedtls_ssl_context *ssl,
 #endif
 #if defined(MBEDTLS_SSL_PROTO_TLS1_2)
 #if defined(MBEDTLS_SHA256_C)
+#if defined(MBEDTLS_SHA256_ALT)
+    mbedtls_sha256_update_alt( &ssl->handshake->fin_sha256, buf, len );
+#else
     mbedtls_sha256_update( &ssl->handshake->fin_sha256, buf, len );
+#endif
 #endif
 #if defined(MBEDTLS_SHA512_C)
     mbedtls_sha512_update( &ssl->handshake->fin_sha512, buf, len );
@@ -4677,11 +4713,19 @@ static void ssl_update_checksum_md5sha1( mbedtls_ssl_context *ssl,
 
 #if defined(MBEDTLS_SSL_PROTO_TLS1_2)
 #if defined(MBEDTLS_SHA256_C)
+#if defined(MBEDTLS_SHA256_ALT)
+static void ssl_update_checksum_sha256( mbedtls_ssl_context *ssl,
+                                        const unsigned char *buf, size_t len )
+{
+    mbedtls_sha256_update_alt( &ssl->handshake->fin_sha256, buf, len );
+}
+#else
 static void ssl_update_checksum_sha256( mbedtls_ssl_context *ssl,
                                         const unsigned char *buf, size_t len )
 {
     mbedtls_sha256_update( &ssl->handshake->fin_sha256, buf, len );
 }
+#endif
 #endif
 
 #if defined(MBEDTLS_SHA512_C)
@@ -4839,6 +4883,56 @@ static void ssl_calc_finished_tls(
 
 #if defined(MBEDTLS_SSL_PROTO_TLS1_2)
 #if defined(MBEDTLS_SHA256_C)
+#if defined(MBEDTLS_SHA256_ALT)
+static void ssl_calc_finished_tls_sha256(
+                mbedtls_ssl_context *ssl, unsigned char *buf, int from )
+{
+    int len = 12;
+    const char *sender;
+    mbedtls_sha256_context sha256;
+    unsigned char padbuf[32];
+
+    mbedtls_ssl_session *session = ssl->session_negotiate;
+    if( !session )
+        session = ssl->session;
+
+    mbedtls_sha256_init_alt( &sha256 );
+
+    MBEDTLS_SSL_DEBUG_MSG( 2, ( "=> calc  finished tls sha256" ) );
+
+    mbedtls_sha256_clone_alt( &sha256, &ssl->handshake->fin_sha256 );
+
+    /*
+     * TLSv1.2:
+     *   hash = PRF( master, finished_label,
+     *               Hash( handshake ) )[0.11]
+     */
+
+#if !defined(MBEDTLS_SHA256_ALT)
+    MBEDTLS_SSL_DEBUG_BUF( 4, "finished sha2 state", (unsigned char *)
+                   sha256.state, sizeof( sha256.state ) );
+#endif
+
+    sender = ( from == MBEDTLS_SSL_IS_CLIENT )
+             ? "client finished"
+             : "server finished";
+
+    mbedtls_sha256_finish_alt( &sha256, padbuf );
+
+    ssl->handshake->tls_prf( session->master, 48, sender,
+                             padbuf, 32, buf, len );
+
+    MBEDTLS_SSL_DEBUG_BUF( 3, "calc finished result", buf, len );
+
+    mbedtls_sha256_free_alt( &sha256 );
+
+    mbedtls_zeroize(  padbuf, sizeof(  padbuf ) );
+
+    MBEDTLS_SSL_DEBUG_MSG( 2, ( "<= calc  finished" ) );
+}
+
+#else  /* MBEDTLS_SHA256_ALT */
+
 static void ssl_calc_finished_tls_sha256(
                 mbedtls_ssl_context *ssl, unsigned char *buf, int from )
 {
@@ -4885,6 +4979,9 @@ static void ssl_calc_finished_tls_sha256(
 
     MBEDTLS_SSL_DEBUG_MSG( 2, ( "<= calc  finished" ) );
 }
+
+#endif /* MBEDTLS_SHA256_ALT */
+
 #endif /* MBEDTLS_SHA256_C */
 
 #if defined(MBEDTLS_SHA512_C)
@@ -5234,8 +5331,13 @@ static void ssl_handshake_params_init( mbedtls_ssl_handshake_params *handshake )
 #endif
 #if defined(MBEDTLS_SSL_PROTO_TLS1_2)
 #if defined(MBEDTLS_SHA256_C)
+#if defined(MBEDTLS_SHA256_ALT)
+    mbedtls_sha256_init_alt(   &handshake->fin_sha256    );
+    mbedtls_sha256_starts_alt( &handshake->fin_sha256, 0 );
+#else
     mbedtls_sha256_init(   &handshake->fin_sha256    );
     mbedtls_sha256_starts( &handshake->fin_sha256, 0 );
+#endif
 #endif
 #if defined(MBEDTLS_SHA512_C)
     mbedtls_sha512_init(   &handshake->fin_sha512    );
@@ -6977,7 +7079,11 @@ void mbedtls_ssl_handshake_free( mbedtls_ssl_handshake_params *handshake )
 #endif
 #if defined(MBEDTLS_SSL_PROTO_TLS1_2)
 #if defined(MBEDTLS_SHA256_C)
+#if defined(MBEDTLS_SHA256_ALT)
+    mbedtls_sha256_free_alt(   &handshake->fin_sha256    );
+#else
     mbedtls_sha256_free(   &handshake->fin_sha256    );
+#endif
 #endif
 #if defined(MBEDTLS_SHA512_C)
     mbedtls_sha512_free(   &handshake->fin_sha512    );

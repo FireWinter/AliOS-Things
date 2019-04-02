@@ -1,22 +1,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <aos/aos.h>
-#include <aos/network.h>
+#include "aos/kernel.h"
+#include <network/network.h>
 #include <sys/time.h>
 
-#include "ali_crypto.h"
 #include "mbedtls/config.h"
 #include "mbedtls/debug.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls/x509_crt.h"
 #include "mbedtls/net_sockets.h"
 
+#if defined(MBEDTLS_AES_ALT)
+#include "ali_crypto.h"
+#endif
+
 #if defined(MBEDTLS_THREADING_ALT)
 #include "mbedtls/threading.h"
 #endif
 
-#define SSL_DEBUG_LEVEL    1
+#define SSL_DEBUG_LEVEL    3
 
 #define SSL_PARAM_MAGIC    0x54321212
 
@@ -36,8 +39,17 @@ static int ssl_random(void *prng, unsigned char *output, size_t output_len)
     (void)prng;
 
     gettimeofday(&tv, NULL);
+
+#if defined(MBEDTLS_AES_ALT)
     ali_seed((uint8_t *)&tv.tv_usec, sizeof(suseconds_t));
     ali_rand_gen(output, output_len);
+#else
+    srandom((unsigned int)tv.tv_usec);
+    while(output_len > 0) {
+        output[output_len - 1] = random() & 0xFF;
+        output_len--;
+    }
+#endif
 
     return 0;
 }
@@ -96,7 +108,7 @@ void *mbedtls_ssl_connect(void *tcp_fd, const char *ca_cert, int ca_cert_len)
         ssl_param->magic = SSL_PARAM_MAGIC;
     }
 
-    /* 
+    /*
      * Initialize the connection
      */
     ssl_param->net.fd = (int)tcp_fd;
@@ -109,15 +121,15 @@ void *mbedtls_ssl_connect(void *tcp_fd, const char *ca_cert, int ca_cert_len)
     }
 #endif
 
-    /* 
+    /*
      * Initialize certificates
      */
 #if defined(CONFIG_SSL_DEBUG)
-    printf("...... Loading the CA root certificate ... ");   
+    printf("...... Loading the CA root certificate ... ");
 #endif
 
     ret = mbedtls_x509_crt_parse(&ssl_param->ca_cert,
-              (unsigned char *)ca_cert, (size_t)ca_cert_len + 1);
+                                 (unsigned char *)ca_cert, (size_t)ca_cert_len + 1);
     if (ret < 0) {
         printf("ssl_connect: x509 parse failed- 0x%x\n", -ret);
         goto _err;
@@ -127,7 +139,7 @@ void *mbedtls_ssl_connect(void *tcp_fd, const char *ca_cert, int ca_cert_len)
     printf("ok (%d skipped)\n", ret);
 #endif
 
-    /* 
+    /*
      * setup stuff
      */
 #if defined(CONFIG_SSL_DEBUG)
@@ -135,10 +147,10 @@ void *mbedtls_ssl_connect(void *tcp_fd, const char *ca_cert, int ca_cert_len)
 #endif
 
     ret = mbedtls_ssl_config_defaults(
-                    &ssl_param->conf,
-                    MBEDTLS_SSL_IS_CLIENT,
-                    MBEDTLS_SSL_TRANSPORT_STREAM,
-                    MBEDTLS_SSL_PRESET_DEFAULT);
+              &ssl_param->conf,
+              MBEDTLS_SSL_IS_CLIENT,
+              MBEDTLS_SSL_TRANSPORT_STREAM,
+              MBEDTLS_SSL_PRESET_DEFAULT);
     if (ret != 0) {
         printf("ssl_connect: set ssl config failed - %d\n", ret);
         goto _err;
@@ -156,6 +168,14 @@ void *mbedtls_ssl_connect(void *tcp_fd, const char *ca_cert, int ca_cert_len)
     mbedtls_ssl_conf_dbg(&ssl_param->conf, ssl_debug, NULL);
 #endif
 
+#if defined(MBEDTLS_SSL_MAX_FRAGMENT_LENGTH)
+    ret = mbedtls_ssl_conf_max_frag_len(&ssl_param->conf, MBEDTLS_SSL_MAX_FRAG_LEN_4096);
+    if (ret != 0) {
+        printf("ssl_connect: mbedtls_ssl_conf_max_frag_len returned - %d\n", ret);
+        goto _err;
+    }
+#endif
+
     ret = mbedtls_ssl_setup(&ssl_param->ssl, &ssl_param->conf);
     if (ret != 0) {
         printf("ssl_connect: mbedtls_ssl_setup returned - %d\n", ret);
@@ -164,7 +184,7 @@ void *mbedtls_ssl_connect(void *tcp_fd, const char *ca_cert, int ca_cert_len)
 
     mbedtls_ssl_set_bio(&ssl_param->ssl, &ssl_param->net, mbedtls_net_send, mbedtls_net_recv, NULL);
 
-    /* 
+    /*
      * handshake
      */
 #if defined(CONFIG_SSL_DEBUG)
@@ -182,7 +202,7 @@ void *mbedtls_ssl_connect(void *tcp_fd, const char *ca_cert, int ca_cert_len)
     printf("ok\n");
 #endif
 
-    /* 
+    /*
      * verify the server certificate
      */
 #if defined(CONFIG_SSL_DEBUG)
@@ -239,7 +259,7 @@ int mbedtls_ssl_send(void *ssl, const char *buffer, int length)
 
     do {
         ret = mbedtls_ssl_write(&ssl_param->ssl,
-                  (const unsigned char *)buffer, (size_t)(length - total_len));
+                                (const unsigned char *)buffer, (size_t)(length - total_len));
         if (ret > 0) {
             total_len += ret;
             buffer += ret;
@@ -265,7 +285,7 @@ int mbedtls_ssl_send(void *ssl, const char *buffer, int length)
 
             return -1;
         }
-    } while(total_len < length && retry < 10);
+    } while (total_len < length && retry < 10);
 
 #if defined(CONFIG_SSL_DEBUG)
     printf("%d bytes sent retry %d\n", ret, retry);
@@ -308,7 +328,7 @@ int mbedtls_ssl_recv(void *ssl, char *buffer, int length)
 
     do {
         ret = mbedtls_ssl_read(&ssl_param->ssl,
-                  (unsigned char *)buffer, (size_t)length);
+                               (unsigned char *)buffer, (size_t)length);
         if (ret > 0) {
             total_len = ret;
             break;
@@ -332,7 +352,7 @@ int mbedtls_ssl_recv(void *ssl, char *buffer, int length)
 
             return -1;
         }
-    } while(0);
+    } while (0);
 
 #if defined(CONFIG_SSL_DEBUG)
     printf("%d bytes read\n", total_len);

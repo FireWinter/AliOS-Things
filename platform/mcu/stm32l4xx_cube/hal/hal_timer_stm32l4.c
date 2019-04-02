@@ -5,7 +5,9 @@
 #include <k_api.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "hal/hal.h"
+
+#include "aos/hal/timer.h"
+
 #include "stm32l4xx_hal.h"
 #include "hal_timer_stm32l4.h"
 #include "stm32l4xx_hal_adc.h"
@@ -14,7 +16,7 @@
 static int32_t timer3_init(timer_dev_t *tim);
 
 /* function used to transform hal para to stm32l4 para */
-int32_t timer_reload_mode_transform(uint8_t reload_mode_hal, uint8_t *reload_mode_stm32l4);
+/*int32_t timer_reload_mode_transform(uint8_t reload_mode_hal, uint8_t *reload_mode_stm32l4);*/
 
 /* handle for adc */
 TIM_HandleTypeDef timer3_handle;
@@ -68,19 +70,23 @@ int32_t timer3_init(timer_dev_t *tim)
 
   	/* Compute the prescaler value to have TIMx counter clock equal to 10000 Hz */
     uwPrescalerValue = (uint32_t)(SystemCoreClock / 10000) - 1;
-    timer3_handle.Init.Period            = ((tim->config.period / 1000000) * 10000) - 1;
+    timer3_handle.Init.Period            = ((tim->config.period * SystemCoreClock ) / 1000000) - 1;
     timer3_handle.Init.Prescaler         = uwPrescalerValue;
     timer3_handle.Init.ClockDivision     = 0;
     timer3_handle.Init.CounterMode       = TIM_COUNTERMODE_UP;
     timer3_handle.Init.RepetitionCounter = 0;
+    timer3_handle.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+    /*
     ret = timer_reload_mode_transform(tim->config.reload_mode, 
-	                             (uint8_t *)&timer3_handle.Init.AutoReloadPreload);
+	                             (uint8_t *)&timer3_handle.Init.AutoReloadPreload);*/
 	
-    if (ret == 0) {
-        ret = HAL_TIM_Base_Init(&timer3_handle);
+    ret = HAL_TIM_Base_Init(&timer3_handle);
+    
+    if (ret == 0 && (tim->config.reload_mode == TIMER_RELOAD_MANU)) {
+        ret = HAL_TIM_OnePulse_Init(&timer3_handle, TIM_OPMODE_SINGLE);
     }
 
-		return ret;
+	return ret;
 }
 
 int32_t hal_timer_start(timer_dev_t *tim)
@@ -115,6 +121,7 @@ int32_t hal_timer_finalize(timer_dev_t *tim)
     return ret;
 }
 
+/*
 int32_t timer_reload_mode_transform(uint8_t reload_mode_hal,
         uint8_t *reload_mode_stm32l4)
 {
@@ -141,7 +148,7 @@ int32_t timer_reload_mode_transform(uint8_t reload_mode_hal,
 
     return ret;
 }
-
+*/
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	if (htim->Instance == TIM3) {

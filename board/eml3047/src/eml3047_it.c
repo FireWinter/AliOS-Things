@@ -62,7 +62,7 @@
 #include "hw.h"
 #include "eml3047_it.h"
 #include "low_power.h"
-#include "vcom.h"
+#include "uart-board.h"
 
 #include <k_api.h>
 
@@ -72,39 +72,6 @@
 /* Private variables ---------------------------------------------------------*/
 /* Private function prototypes -----------------------------------------------*/
 /* Functions Definition ------------------------------------------------------*/
-
-void RTC_IRQHandler( void )
-{
-    HW_RTC_IrqHandler( );
-}
-
-void EXTI0_1_IRQHandler( void )
-{
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_0 );
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_1 );
-}
-
-void EXTI2_3_IRQHandler( void )
-{
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_2 );
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_3 );
-}
-
-void EXTI4_15_IRQHandler( void )
-{
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_4 );
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_5 );
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_6 );
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_7 );
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_8 );
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_9 );
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_10 );
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_11 );
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_12 );
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_13 );
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_14 );
-    HW_GPIO_EXTI_IRQHandler( GPIO_PIN_15 );
-}
 
 void UARTX_IRQHandler( void )
 {
@@ -124,16 +91,30 @@ void USART4_5_IRQHandler(void)
         /* no need to clear the RXNE flag because it is auto cleared by reading the data*/
         rx = LL_USART_ReceiveData8( USART4 );
         rx_ready = 1;
-        //PRINTF("%c\r\n", rx);
     }
     if (rx_ready) {
-#ifdef CONFIG_LINKWAN_TEST
-        extern void linkwan_test_cli_cb(uint8_t cmd);
-        linkwan_test_cli_cb(rx);
+#ifdef CONFIG_LINKWAN_AT
+        extern void linkwan_serial_input(uint8_t cmd);
+        linkwan_serial_input(rx);
 #endif
     }
 
     RHINO_CPU_INTRPT_ENABLE();
+}
+
+int linkwan_serial_output(uint8_t *buffer, int len)
+{
+    int index;
+
+    for (index = 0; index < len; index++ ) {
+        LL_USART_ClearFlag_TC(USART4);
+        LL_USART_TransmitData8(USART4, buffer[index]);
+        while (LL_USART_IsActiveFlag_TC(USART4) != SET) {
+            ;
+        }
+    }
+    LL_USART_ClearFlag_TC(USART4);
+    return len;
 }
 
 /* Private functions ---------------------------------------------------------*/

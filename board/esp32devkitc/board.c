@@ -2,9 +2,9 @@
  * Copyright (C) 2015-2017 Alibaba Group Holding Limited
  */
 
-#include "hal/soc/soc.h"
+#include "aos/hal/flash.h"
 #include <aos/kernel.h>
-#include <aos/aos.h>
+#include "aos/kernel.h"
 
 /* Logic partition on flash devices */
 const hal_logic_partition_t hal_partitions[] =
@@ -63,6 +63,15 @@ const hal_logic_partition_t hal_partitions[] =
         .partition_description      = "PARAMETER4",
         .partition_start_addr       = 0x314000,
         .partition_length           = 0x1000, //4k bytes
+        .partition_options          = PAR_OPT_READ_EN | PAR_OPT_WRITE_EN,
+    },
+    /*add for gravity fs*/
+     [HAL_PARTITION_SPIFFS] =
+    {
+        .partition_owner            = HAL_FLASH_EMBEDDED,
+        .partition_description      = "spiffs",
+        .partition_start_addr       = 0x315000,
+        .partition_length           = 0x80000, //512k bytes
         .partition_options          = PAR_OPT_READ_EN | PAR_OPT_WRITE_EN,
     },
 };

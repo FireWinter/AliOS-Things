@@ -23,8 +23,8 @@
 MEMORY
 {
     ROM    : ORIGIN = 0x0        , LENGTH = 0x1FFF    /* ROM  8KB*/
-    EFLASH : ORIGIN = 0x1000bc00 , LENGTH = 0x3F7FF   /* E-FLASH 254KB*/
-    SRAM   : ORIGIN = 0x60001000 , LENGTH = 0x13000   /* on-chip SRAM 80KB*/
+    EFLASH : ORIGIN = 0x10010800 , LENGTH = 0x3ABFF   /* E-FLASH 254KB*/
+    SRAM   : ORIGIN = 0x60002000 , LENGTH = 0x12000   /* on-chip SRAM 80KB*/
 }
 
 PROVIDE (__StackTop =  0x60014000);
@@ -40,7 +40,6 @@ SECTIONS
  .text : AT(ADDR(.text)){
   . = ALIGN(0x4) ;
   *startup.o(*.text)
-  *startup.o(.vectors)
   __stext = . ;
   *(.text)
   *(.text*)
@@ -90,6 +89,7 @@ SECTIONS
   __sdata = . ;
   __data_start__ = . ;
   data_start = . ;
+  *startup.o(.vectors)
   *(.got.plt)
   *(.got)
   *(.gnu.linkonce.r*)

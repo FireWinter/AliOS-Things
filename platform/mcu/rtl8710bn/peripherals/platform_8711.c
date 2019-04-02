@@ -180,7 +180,7 @@ platform_uart_t platform_uart_peripherals[] =
     .tx = PA_30,
     .rx = PA_29,
   },
-    [MICO_UART_2] =
+  [MICO_UART_2] =
   {
     .tx = PA_23,
     .rx = PA_18,
